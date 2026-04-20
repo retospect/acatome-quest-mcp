@@ -1,4 +1,4 @@
-"""MCP server — three tools: ``submit``, ``status``, ``update``.
+"""MCP server — four tools: ``submit``, ``status``, ``update``, ``submit_file``.
 
 Thin wrapper around :class:`QuestService`.  All business logic lives in
 ``service.py``; this file handles stdio plumbing and dict↔dataclass coercion
@@ -170,6 +170,76 @@ async def update(
         return {"error": "not_found", "detail": str(exc)}
     except ValueError as exc:
         return {"error": "invalid", "detail": str(exc)}
+    return _card(req)
+
+
+@mcp.tool()
+async def submit_file(
+    url: str | None = None,
+    content_base64: str | None = None,
+    filename: str | None = None,
+    request_id: str | None = None,
+    ref: dict[str, Any] | None = None,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    """Attach a user-supplied PDF to a paper request.
+
+    Use this when a user drops a PDF (e.g. a Discord attachment) for a paper
+    that Quest could not fetch automatically, or to pre-load a PDF you
+    already have on disk.
+
+    Args:
+        url: A direct HTTP(S) link to the PDF.  Must resolve to a fresh file
+            (follow-redirects is enabled, so short-lived Discord CDN URLs
+            work).  Mutually exclusive with ``content_base64``.
+        content_base64: Base64-encoded PDF bytes, for agents that already
+            have the file in memory.  Prefer ``url`` when available so the
+            provenance URL is recorded on the request.
+        filename: Optional filename hint, used when naming the file written
+            to the inbox.  Falls back to the request's author/year.
+        request_id: Attach to an existing request (preferred).  Reopens
+            ``failed``, ``extract_failed``, or ``needs_user`` requests.
+            Refuses to overwrite already-closed or cancelled requests.
+        ref: Create a new request from this reference (same shape as
+            :func:`submit`) and attach the PDF.  Use this when the paper
+            isn't already being tracked.
+        created_by: Agent or user id, used when ``ref`` is given.
+
+    Returns:
+        The full request record, flipped to ``ingesting``.  The background
+        runner reconciles with ``acatome-store`` once ``acatome-extract``
+        has done its work.
+
+    Exactly one of ``url`` / ``content_base64`` is required, and exactly
+    one of ``request_id`` / ``ref``.
+    """
+    svc = await _get_service()
+    content: bytes | None = None
+    if content_base64:
+        import base64
+
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except Exception as exc:
+            return {"error": "invalid", "detail": f"bad base64: {exc}"}
+    try:
+        req = await svc.submit_file(
+            url=url,
+            content=content,
+            filename=filename,
+            request_id=request_id,
+            ref=ref,
+            created_by=created_by,
+        )
+    except NotFoundError as exc:
+        return {"error": "not_found", "detail": str(exc)}
+    except ValueError as exc:
+        return {"error": "invalid", "detail": str(exc)}
+    except RateLimitError as exc:
+        return {"error": "rate_limit", "detail": str(exc)}
+    except Exception as exc:  # network errors, disk write errors
+        log.exception("submit_file failed")
+        return {"error": "io", "detail": str(exc)}
     return _card(req)
 
 

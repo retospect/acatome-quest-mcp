@@ -3,8 +3,10 @@
 Subcommands::
 
     acatome-quest submit <DOI|arxiv|--title ...>
-    acatome-quest status [<id> | --filter status=queued]
+    acatome-quest status [<id> | --filter status=queued] [--count]
     acatome-quest update <id> <mode> [args...]
+    acatome-quest submit-file (--url URL | --path PATH) (--request-id ID | ...)
+    acatome-quest report [--status needs_user ...] [--document ch02.tex]
     acatome-quest runner [--once]
     acatome-quest reconcile
 """
@@ -20,7 +22,8 @@ import sys
 from typing import Any
 
 from .db import DB
-from .models import UpdateMode
+from .models import PaperRequest, RequestStatus, UpdateMode
+from .report import render_report
 from .runner import Runner
 from .service import NotFoundError, QuestService, RateLimitError
 
@@ -54,6 +57,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Filter (repeatable). Keys: status, created_by, has_misconception, "
         "source_document, limit",
     )
+    st.add_argument(
+        "--count",
+        action="store_true",
+        help="Print only the number of matching requests (for shell callers).",
+    )
 
     u = sub.add_parser("update", help="Mutate a request")
     u.add_argument("id")
@@ -64,6 +72,60 @@ def _build_parser() -> argparse.ArgumentParser:
     u.add_argument("--severity")
     u.add_argument("--evidence")
     u.add_argument("--priority", type=int)
+
+    sf = sub.add_parser(
+        "submit-file",
+        help="Attach a user-supplied PDF to a request (URL or local path)",
+    )
+    sf_src = sf.add_mutually_exclusive_group(required=True)
+    sf_src.add_argument("--url", help="HTTP(S) URL to fetch the PDF from")
+    sf_src.add_argument("--path", help="Local file path to read the PDF from")
+    sf_target = sf.add_mutually_exclusive_group(required=True)
+    sf_target.add_argument(
+        "--request-id",
+        help="Attach to an existing request id",
+    )
+    sf_target.add_argument(
+        "--doi",
+        dest="sf_doi",
+        help="Create a new request for this DOI and attach",
+    )
+    sf_target.add_argument(
+        "--arxiv",
+        dest="sf_arxiv",
+        help="Create a new request for this arXiv id and attach",
+    )
+    sf_target.add_argument(
+        "--title",
+        dest="sf_title",
+        help="Create a new request for this title and attach",
+    )
+    sf.add_argument("--filename", help="Filename hint for the written file")
+    sf.add_argument("--created-by", default=os.environ.get("USER"))
+
+    rp = sub.add_parser(
+        "report",
+        help="Render a markdown exception report for papers needing manual action",
+    )
+    rp.add_argument(
+        "--status",
+        action="append",
+        default=None,
+        help="Statuses to include (repeatable). Default: needs_user, failed, "
+        "extract_failed.",
+    )
+    rp.add_argument("--created-by", help="Only include requests from this agent.")
+    rp.add_argument("--document", help="Only include requests for this source file.")
+    rp.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+    )
+    rp.add_argument(
+        "--title",
+        default="Papers needing manual acquisition",
+        help="Report heading.",
+    )
 
     r = sub.add_parser("runner", help="Run the background fetcher daemon")
     r.add_argument("--once", action="store_true")
@@ -93,6 +155,10 @@ async def _amain(argv: list[str] | None = None) -> int:
             return await _cmd_status(db, args)
         if args.cmd == "update":
             return await _cmd_update(db, args)
+        if args.cmd == "submit-file":
+            return await _cmd_submit_file(db, args)
+        if args.cmd == "report":
+            return await _cmd_report(db, args)
         if args.cmd == "runner":
             runner = Runner(db)
             try:
@@ -168,6 +234,9 @@ async def _cmd_status(db: DB, args: argparse.Namespace) -> int:
             return 2
         # When id is given, status() returns a single request, not a list.
         assert not isinstance(req, list)
+        if args.count:
+            print(1)
+            return 0
         print(json.dumps(req.to_dict(), indent=2, default=str))
         return 0
     f: dict[str, Any] = {}
@@ -183,10 +252,106 @@ async def _cmd_status(db: DB, args: argparse.Namespace) -> int:
         else:
             f[k] = v
     out = await svc.status(filter=f)
+    if args.count:
+        print(len(out) if isinstance(out, list) else 1)
+        return 0
     if isinstance(out, list):
         print(json.dumps([r.to_dict() for r in out], indent=2, default=str))
     else:
         print(json.dumps(out.to_dict(), indent=2, default=str))
+    return 0
+
+
+_REPORT_DEFAULT_STATUSES = (
+    RequestStatus.NEEDS_USER,
+    RequestStatus.FAILED,
+    RequestStatus.EXTRACT_FAILED,
+)
+
+_REPORT_STATUS_ORDER = {s: i for i, s in enumerate(_REPORT_DEFAULT_STATUSES)}
+
+
+async def _cmd_report(db: DB, args: argparse.Namespace) -> int:
+    svc = QuestService(db)
+    if args.status:
+        try:
+            statuses = [RequestStatus(s) for s in args.status]
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    else:
+        statuses = list(_REPORT_DEFAULT_STATUSES)
+
+    all_reqs: list[PaperRequest] = []
+    seen: set[Any] = set()
+    for s in statuses:
+        f: dict[str, Any] = {"status": s.value, "limit": 500}
+        if args.created_by:
+            f["created_by"] = args.created_by
+        if args.document:
+            f["source_document"] = args.document
+        out = await svc.status(filter=f)
+        assert isinstance(out, list)
+        for r in out:
+            if r.id not in seen:
+                seen.add(r.id)
+                all_reqs.append(r)
+
+    all_reqs.sort(key=lambda r: (_REPORT_STATUS_ORDER.get(r.status, 99), r.created_at))
+
+    if args.format == "json":
+        print(json.dumps([r.to_dict() for r in all_reqs], indent=2, default=str))
+    else:
+        print(render_report(all_reqs, title=args.title))
+    return 0
+
+
+async def _cmd_submit_file(db: DB, args: argparse.Namespace) -> int:
+    svc = QuestService(db)
+    content: bytes | None = None
+    url: str | None = None
+    if args.path:
+        from pathlib import Path as _Path
+
+        content = _Path(args.path).read_bytes()
+    else:
+        url = args.url
+
+    ref: dict[str, Any] | None = None
+    if not args.request_id:
+        ref = {
+            "doi": args.sf_doi,
+            "arxiv": args.sf_arxiv,
+            "title": args.sf_title,
+        }
+        # Drop empty keys so service sees a clean ref.
+        ref = {k: v for k, v in ref.items() if v}
+        if not ref:
+            print(
+                "error: submit-file needs --request-id or one of --doi / --arxiv / --title",
+                file=sys.stderr,
+            )
+            return 2
+
+    try:
+        req = await svc.submit_file(
+            url=url,
+            content=content,
+            filename=args.filename or (args.path.split("/")[-1] if args.path else None),
+            request_id=args.request_id,
+            ref=ref,
+            created_by=args.created_by,
+        )
+    except NotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except RateLimitError as exc:
+        print(f"rate limit: {exc}", file=sys.stderr)
+        return 3
+    print(json.dumps(req.to_dict(), indent=2, default=str))
     return 0
 
 

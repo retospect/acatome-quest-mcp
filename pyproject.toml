@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "acatome-quest-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Paper-request MCP: track, resolve, fetch (OA-only), and flag misconceptions for scientific papers"
 readme = "README.md"
 license = "GPL-3.0-or-later"

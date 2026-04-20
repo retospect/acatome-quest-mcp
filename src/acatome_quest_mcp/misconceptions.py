@@ -24,6 +24,10 @@ class MisconceptionCode(StrEnum):
     DUPLICATE_OF = "duplicate_of"
     RETRACTED = "retracted"
     PREPRINT_OF = "preprint_of"
+    # User-dropped PDF that, once ingested, resolved to a different paper than
+    # the request it was attached to.  Caught by the reconciler; the request
+    # stays open.
+    PDF_MISMATCH = "pdf_mismatch"
 
 
 class Severity(StrEnum):
@@ -42,6 +46,7 @@ DEFAULT_SEVERITY: dict[MisconceptionCode, Severity] = {
     MisconceptionCode.DUPLICATE_OF: Severity.MINOR,
     MisconceptionCode.RETRACTED: Severity.CRITICAL,
     MisconceptionCode.PREPRINT_OF: Severity.INFO,
+    MisconceptionCode.PDF_MISMATCH: Severity.CRITICAL,
 }
 
 

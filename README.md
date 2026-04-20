@@ -40,13 +40,14 @@ For dedup against a local `acatome-store`:
 pip install 'acatome-quest-mcp[store]'
 ```
 
-## Three tools
+## Four tools
 
 | Tool | What it does |
 |------|--------------|
 | `submit(ref, *, dry_run=False, source=None, priority=0, created_by=None)` | Resolve + optionally queue.  Idempotent. |
 | `status(id=None, *, filter=None)` | Read one or many requests. |
 | `update(id, mode, **kwargs)` | Mutate.  Modes: `confirm`, `repoint`, `flag`, `priority`, `cancel`. |
+| `submit_file(url?, content_base64?, filename?, request_id?, ref?, created_by?)` | Attach a user-supplied PDF (e.g. Discord attachment) to an existing request or create a new one, flip to `ingesting`. |
 
 ### submit
 
@@ -94,6 +95,51 @@ update(id, mode="priority", priority=5)
 update(id, mode="cancel")
 ```
 
+### submit_file
+
+```python
+# User drops a PDF for an already-tracked request (reopens failed / needs_user):
+submit_file(url="https://cdn.discordapp.com/…/paper.pdf",
+            request_id="7f3a…",
+            filename="feng2024.pdf")
+
+# User supplies both a PDF and a DOI in one step (creates the request):
+submit_file(url="https://cdn.discordapp.com/…/paper.pdf",
+            ref={"doi": "10.1021/jacs.2c01234"},
+            created_by="asa")
+
+# Bytes already in memory (no URL to fetch):
+submit_file(content_base64="JVBERi0xLjQKJf…",
+            request_id="7f3a…")
+```
+
+PDF magic bytes are validated; HTML error pages are rejected. The file is written to the extractor's inbox (`~/.acatome/inbox/` by default) and the request flips to `ingesting`. If the paper's DOI is already in the store, the tool short-circuits to `found_in_store` without writing anything.
+
+## CLI
+
+The `acatome-quest` binary exposes the same surface as the MCP plus a couple of
+shell-friendly helpers:
+
+```bash
+acatome-quest submit 10.1021/jacs.2c01234
+acatome-quest status <id>
+acatome-quest status --filter status=needs_user
+acatome-quest status --filter status=needs_user --count     # just prints "3"
+acatome-quest update <id> repoint --doi 10.1023/A:…
+acatome-quest submit-file --path ./feng2024.pdf --request-id 7f3a…
+acatome-quest submit-file --url https://.../paper.pdf --doi 10.1021/jacs.2c01234
+acatome-quest report                                         # markdown worklist
+acatome-quest report --document ch04.tex --format markdown   # scoped
+acatome-quest runner [--once]
+acatome-quest reconcile
+```
+
+`report` renders a paste-ready markdown document for every request in
+`needs_user`, `failed`, or `extract_failed` — each entry with citation,
+DOI/arXiv link, failure reason, misconception evidence, and a concrete
+suggested action (repoint DOI, drop PDF into `~/.acatome/inbox/`, request via
+interlibrary loan, …). Hand it to a librarian or paste into an ILL form.
+
 ## Statuses
 
 | Status | Meaning |
@@ -120,6 +166,7 @@ update(id, mode="cancel")
 | `duplicate_of` | minor | Already in store under another slug |
 | `retracted` | critical | S2 / Retraction Watch flag |
 | `preprint_of` | info | arXiv preprint of a later journal paper |
+| `pdf_mismatch` | critical | User-dropped PDF resolved to a different paper than the request it was attached to |
 
 ## Architecture
 
