@@ -1,16 +1,15 @@
 """Metadata resolution and cross-validation.
 
-Wraps ``acatome-meta`` (Crossref + Semantic Scholar + arXiv) in an async
-interface and produces :class:`ResolvedRef` + candidates + misconceptions.
+Wraps ``acatome-meta`` (Crossref + Semantic Scholar + arXiv) and produces
+a :class:`ResolvedRef` + candidates + misconceptions.
 
-The wrapped functions are synchronous (``habanero`` / ``semanticscholar`` are
-not async).  We off-load them to the default executor via
-:func:`asyncio.to_thread` so the event loop keeps running.
+The resolver is a cascade (try Crossref → stop on success; else try S2;
+etc.) — sequential by design.  Formerly wrapped in ``asyncio.to_thread``
+for no functional benefit; now called directly.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from typing import Any
@@ -57,7 +56,7 @@ class Resolver:
         self._mailto = mailto or os.environ.get("ACATOME_CROSSREF_MAILTO", "")
         self._s2_key = s2_key or os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
 
-    async def resolve(
+    def resolve(
         self, ref: PaperRef
     ) -> tuple[ResolvedRef, list[Candidate], list[Misconception]]:
         """Full cascade.  Returns (resolved, candidates, misconceptions)."""
@@ -67,7 +66,7 @@ class Resolver:
 
         # 1. DOI → Crossref (authoritative)
         if ref.doi:
-            crossref = await self._crossref(ref.doi)
+            crossref = self._crossref(ref.doi)
             if crossref:
                 resolved = _from_crossref(crossref)
                 resolved.score = 0.95
@@ -98,7 +97,7 @@ class Resolver:
 
         # 2. arXiv id → S2 (arXiv metadata).
         if ref.arxiv:
-            s2 = await self._s2_id(f"ARXIV:{ref.arxiv}")
+            s2 = self._s2_id(f"ARXIV:{ref.arxiv}")
             if s2:
                 resolved = _from_s2(s2)
                 if not resolved.arxiv:
@@ -108,7 +107,7 @@ class Resolver:
 
         # 3. Title → S2 search.
         if ref.title:
-            s2 = await self._s2_title(ref.title)
+            s2 = self._s2_title(ref.title)
             if s2:
                 resolved = _from_s2(s2)
                 score = 0.7
@@ -149,14 +148,14 @@ class Resolver:
     # Sync shims — one of these is what's easy to mock in tests.
     # -----------------------------------------------------------------
 
-    async def _crossref(self, doi: str) -> dict[str, Any] | None:
-        return await asyncio.to_thread(self._crossref_fn, doi, self._mailto)
+    def _crossref(self, doi: str) -> dict[str, Any] | None:
+        return self._crossref_fn(doi, self._mailto)
 
-    async def _s2_title(self, title: str) -> dict[str, Any] | None:
-        return await asyncio.to_thread(self._s2_title_fn, title, self._s2_key)
+    def _s2_title(self, title: str) -> dict[str, Any] | None:
+        return self._s2_title_fn(title, self._s2_key)
 
-    async def _s2_id(self, paper_id: str) -> dict[str, Any] | None:
-        return await asyncio.to_thread(self._s2_id_fn, paper_id, self._s2_key)
+    def _s2_id(self, paper_id: str) -> dict[str, Any] | None:
+        return self._s2_id_fn(paper_id, self._s2_key)
 
 
 # ---------------------------------------------------------------------------

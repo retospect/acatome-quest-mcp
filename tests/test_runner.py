@@ -53,13 +53,11 @@ class _FakeFetcher:
         self.name = name
         self._result = result
 
-    async def try_fetch(
-        self, client: httpx.AsyncClient, req: PaperRequest
-    ) -> FetchResult:
+    def try_fetch(self, client: httpx.Client, req: PaperRequest) -> FetchResult:
         return self._result
 
 
-async def _queued_request(
+def _queued_request(
     db: FakeDB,
     *,
     doi: str = "10.1/sample",
@@ -67,7 +65,7 @@ async def _queued_request(
     not_before: datetime | None = None,
 ) -> PaperRequest:
     now = datetime.now(UTC)
-    return await db.insert(
+    return db.insert(
         PaperRequest(
             id=uuid4(),
             created_at=now,
@@ -95,17 +93,17 @@ async def _queued_request(
 
 
 @pytest.fixture
-async def client():
-    async with httpx.AsyncClient() as c:
+def client():
+    with httpx.Client() as c:
         yield c
 
 
 class TestRunnerFetch:
-    async def test_success_writes_to_inbox_and_flips_to_ingesting(
-        self, tmp_path: Path, client: httpx.AsyncClient
+    def test_success_writes_to_inbox_and_flips_to_ingesting(
+        self, tmp_path: Path, client: httpx.Client
     ) -> None:
         db = FakeDB()
-        req = await _queued_request(db, arxiv="2508.20254")
+        req = _queued_request(db, arxiv="2508.20254")
 
         pdf = b"%PDF-1.7\nhello"
         fetcher = _FakeFetcher(
@@ -125,11 +123,11 @@ class TestRunnerFetch:
             dedup=_FakeDedup(),  # type: ignore[arg-type]
             http_client=client,
         )
-        n = await runner.tick()
-        await runner.close()
+        n = runner.tick()
+        runner.close()
 
         assert n == 1
-        out = await db.get(req.id)
+        out = db.get(req.id)
         assert out is not None
         assert out.status == RequestStatus.INGESTING
         assert out.pdf_path is not None
@@ -137,11 +135,11 @@ class TestRunnerFetch:
         assert len(out.attempts) == 1
         assert out.attempts[0].success
 
-    async def test_all_sources_fail_requeues_with_backoff(
-        self, tmp_path: Path, client: httpx.AsyncClient
+    def test_all_sources_fail_requeues_with_backoff(
+        self, tmp_path: Path, client: httpx.Client
     ) -> None:
         db = FakeDB()
-        req = await _queued_request(db)
+        req = _queued_request(db)
 
         failing = _FakeFetcher(
             "arxiv",
@@ -160,20 +158,20 @@ class TestRunnerFetch:
             dedup=_FakeDedup(),  # type: ignore[arg-type]
             http_client=client,
         )
-        await runner.tick()
-        await runner.close()
+        runner.tick()
+        runner.close()
 
-        out = await db.get(req.id)
+        out = db.get(req.id)
         assert out is not None
         assert out.status == RequestStatus.QUEUED
         assert out.not_before > datetime.now(UTC) + timedelta(seconds=10)
         assert out.last_error
 
-    async def test_fetcher_not_applicable_skipped(
-        self, tmp_path: Path, client: httpx.AsyncClient
+    def test_fetcher_not_applicable_skipped(
+        self, tmp_path: Path, client: httpx.Client
     ) -> None:
         db = FakeDB()
-        req = await _queued_request(db)
+        req = _queued_request(db)
 
         na = _FakeFetcher(
             "arxiv",
@@ -197,10 +195,10 @@ class TestRunnerFetch:
             dedup=_FakeDedup(),  # type: ignore[arg-type]
             http_client=client,
         )
-        await runner.tick()
-        await runner.close()
+        runner.tick()
+        runner.close()
 
-        out = await db.get(req.id)
+        out = db.get(req.id)
         assert out is not None
         assert out.status == RequestStatus.INGESTING
         # Only the applicable fetcher should show up in attempts.
@@ -208,12 +206,12 @@ class TestRunnerFetch:
 
 
 class TestRunnerReconcile:
-    async def test_ingesting_request_closed_when_store_has_paper(
-        self, tmp_path: Path, client: httpx.AsyncClient
+    def test_ingesting_request_closed_when_store_has_paper(
+        self, tmp_path: Path, client: httpx.Client
     ) -> None:
         db = FakeDB()
-        req = await _queued_request(db)
-        await db.update(req.id, status=RequestStatus.INGESTING)
+        req = _queued_request(db)
+        db.update(req.id, status=RequestStatus.INGESTING)
 
         dedup = _FakeDedup(
             {
@@ -232,21 +230,21 @@ class TestRunnerReconcile:
             dedup=dedup,  # type: ignore[arg-type]
             http_client=client,
         )
-        await runner._reconcile()
-        await runner.close()
+        runner._reconcile()
+        runner.close()
 
-        out = await db.get(req.id)
+        out = db.get(req.id)
         assert out is not None
         assert out.status == RequestStatus.INGESTED
         assert out.resolved.ref == "smith2024sample"
         assert out.resolved.score == 1.0
 
-    async def test_needs_user_also_closed_on_manual_drop(
-        self, tmp_path: Path, client: httpx.AsyncClient
+    def test_needs_user_also_closed_on_manual_drop(
+        self, tmp_path: Path, client: httpx.Client
     ) -> None:
         db = FakeDB()
-        req = await _queued_request(db)
-        await db.update(req.id, status=RequestStatus.NEEDS_USER)
+        req = _queued_request(db)
+        db.update(req.id, status=RequestStatus.NEEDS_USER)
 
         dedup = _FakeDedup(
             {
@@ -265,27 +263,27 @@ class TestRunnerReconcile:
             dedup=dedup,  # type: ignore[arg-type]
             http_client=client,
         )
-        await runner._reconcile()
-        await runner.close()
+        runner._reconcile()
+        runner.close()
 
-        out = await db.get(req.id)
+        out = db.get(req.id)
         assert out is not None
         assert out.status == RequestStatus.INGESTED
 
 
 class TestRunnerTimeout:
-    async def test_ingesting_row_escalates_after_timeout(
+    def test_ingesting_row_escalates_after_timeout(
         self,
         tmp_path: Path,
-        client: httpx.AsyncClient,
+        client: httpx.Client,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import acatome_quest_mcp.runner as runner_mod
 
         monkeypatch.setattr(runner_mod, "INGEST_TIMEOUT", 0)
         db = FakeDB()
-        req = await _queued_request(db)
-        await db.update(req.id, status=RequestStatus.INGESTING)
+        req = _queued_request(db)
+        db.update(req.id, status=RequestStatus.INGESTING)
 
         runner = Runner(
             db,  # type: ignore[arg-type]
@@ -294,10 +292,10 @@ class TestRunnerTimeout:
             dedup=_FakeDedup(),  # type: ignore[arg-type]
             http_client=client,
         )
-        await runner._escalate_timeouts()
-        await runner.close()
+        runner._escalate_timeouts()
+        runner.close()
 
-        out = await db.get(req.id)
+        out = db.get(req.id)
         assert out is not None
         assert out.status == RequestStatus.EXTRACT_FAILED
         assert out.last_error

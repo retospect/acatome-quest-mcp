@@ -65,27 +65,25 @@ def _s2_result(
 
 
 class TestDoiResolution:
-    async def test_doi_hit_returns_resolved(self) -> None:
+    def test_doi_hit_returns_resolved(self) -> None:
         r = _mk_resolver(crossref=_crossref_result())
-        resolved, candidates, miscs = await r.resolve(PaperRef(doi="10.1/sample"))
+        resolved, candidates, miscs = r.resolve(PaperRef(doi="10.1/sample"))
         assert resolved.title == "Sample paper"
         assert resolved.source == "crossref"
         assert resolved.score > 0.9
         assert not candidates
         assert not miscs
 
-    async def test_doi_miss_flags_invalid_and_falls_back_to_title(self) -> None:
+    def test_doi_miss_flags_invalid_and_falls_back_to_title(self) -> None:
         r = _mk_resolver(crossref=None, s2_title=_s2_result(title="Fallback"))
-        resolved, _, miscs = await r.resolve(
-            PaperRef(doi="10.1/bogus", title="Fallback")
-        )
+        resolved, _, miscs = r.resolve(PaperRef(doi="10.1/bogus", title="Fallback"))
         assert any(m.code == MisconceptionCode.DOI_INVALID for m in miscs)
         assert resolved.source == "s2"
         assert resolved.title == "Fallback"
 
-    async def test_title_not_found_flags_fabrication(self) -> None:
+    def test_title_not_found_flags_fabrication(self) -> None:
         r = _mk_resolver(crossref=None, s2_title=None)
-        resolved, _, miscs = await r.resolve(
+        resolved, _, miscs = r.resolve(
             PaperRef(doi="10.1/bogus", title="Ghost paper that doesn't exist")
         )
         codes = {m.code for m in miscs}
@@ -95,12 +93,12 @@ class TestDoiResolution:
 
 
 class TestTitleMismatch:
-    async def test_mismatch_flags_critical(self) -> None:
+    def test_mismatch_flags_critical(self) -> None:
         # DOI resolves to a completely different title.
         r = _mk_resolver(
             crossref=_crossref_result(title="An unrelated paper about catalysis")
         )
-        resolved, _, miscs = await r.resolve(
+        resolved, _, miscs = r.resolve(
             PaperRef(
                 doi="10.1/sample",
                 title="Anion exchange membranes for NOx reduction",
@@ -111,13 +109,13 @@ class TestTitleMismatch:
         # Score should be dropped to reflect low confidence.
         assert resolved.score < 0.5
 
-    async def test_near_match_does_not_flag(self) -> None:
+    def test_near_match_does_not_flag(self) -> None:
         r = _mk_resolver(
             crossref=_crossref_result(
                 title="Anion-exchange membranes for NOx reduction: a review"
             )
         )
-        resolved, _, miscs = await r.resolve(
+        resolved, _, miscs = r.resolve(
             PaperRef(
                 doi="10.1/sample",
                 title="Anion exchange membranes for NOx reduction",
@@ -129,24 +127,24 @@ class TestTitleMismatch:
 
 
 class TestArxivResolution:
-    async def test_arxiv_id_uses_s2(self) -> None:
+    def test_arxiv_id_uses_s2(self) -> None:
         r = _mk_resolver(s2_id=_s2_result(title="arXiv paper", arxiv_id="2508.20254"))
-        resolved, _, miscs = await r.resolve(PaperRef(arxiv="2508.20254"))
+        resolved, _, miscs = r.resolve(PaperRef(arxiv="2508.20254"))
         assert resolved.source == "s2"
         assert resolved.arxiv == "2508.20254"
         assert not miscs
 
 
 class TestTitleOnly:
-    async def test_score_reflects_fuzz(self) -> None:
+    def test_score_reflects_fuzz(self) -> None:
         r = _mk_resolver(s2_title=_s2_result(title="Slightly different title"))
-        resolved, _, _ = await r.resolve(PaperRef(title="Different title slightly"))
+        resolved, _, _ = r.resolve(PaperRef(title="Different title slightly"))
         assert 0.3 <= resolved.score <= 0.9
 
 
 class TestEmptyRef:
-    async def test_empty_returns_echo(self) -> None:
+    def test_empty_returns_echo(self) -> None:
         r = _mk_resolver()
-        resolved, _, _ = await r.resolve(PaperRef())
+        resolved, _, _ = r.resolve(PaperRef())
         assert resolved.source == "echo"
         assert resolved.score == 0.0

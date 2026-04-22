@@ -1,9 +1,9 @@
 """In-memory FakeDB implementing the surface of :class:`acatome_quest_mcp.db.DB`.
 
 Lets unit tests exercise the full submit/status/update flow without needing
-postgres or asyncpg.  The FakeDB is intentionally dumb — it has no migrations,
-no ``FOR UPDATE SKIP LOCKED`` semantics, no JSON round-trip.  It stores
-:class:`PaperRequest` dataclasses directly.
+postgres or psycopg.  The FakeDB is intentionally dumb — it has no
+migrations, no ``FOR UPDATE SKIP LOCKED`` semantics, no JSON round-trip.
+It stores :class:`PaperRequest` dataclasses directly.
 """
 
 from __future__ import annotations
@@ -26,21 +26,21 @@ class FakeDB:
     def __init__(self) -> None:
         self._rows: dict[UUID, PaperRequest] = {}
 
-    async def connect(self) -> None:  # pragma: no cover - no-op
+    def connect(self) -> None:  # pragma: no cover - no-op
         pass
 
-    async def close(self) -> None:  # pragma: no cover - no-op
+    def close(self) -> None:  # pragma: no cover - no-op
         pass
 
-    async def migrate(self) -> None:  # pragma: no cover - no-op
+    def migrate(self) -> None:  # pragma: no cover - no-op
         pass
 
-    async def insert(self, req: PaperRequest) -> PaperRequest:
+    def insert(self, req: PaperRequest) -> PaperRequest:
         stored = replace(req, id=uuid4())
         self._rows[stored.id] = stored
         return stored
 
-    async def update(self, id: UUID, **fields: Any) -> PaperRequest | None:
+    def update(self, id: UUID, **fields: Any) -> PaperRequest | None:
         if id not in self._rows:
             return None
         row = self._rows[id]
@@ -75,10 +75,10 @@ class FakeDB:
         self._rows[id] = replace(row, **changes)
         return self._rows[id]
 
-    async def get(self, id: UUID) -> PaperRequest | None:
+    def get(self, id: UUID) -> PaperRequest | None:
         return self._rows.get(id)
 
-    async def find_open_by_doi(self, doi: str) -> PaperRequest | None:
+    def find_open_by_doi(self, doi: str) -> PaperRequest | None:
         matches = [
             r
             for r in self._rows.values()
@@ -90,7 +90,7 @@ class FakeDB:
         matches.sort(key=lambda r: r.created_at, reverse=True)
         return matches[0]
 
-    async def find_open_by_arxiv(self, arxiv: str) -> PaperRequest | None:
+    def find_open_by_arxiv(self, arxiv: str) -> PaperRequest | None:
         matches = [
             r
             for r in self._rows.values()
@@ -102,14 +102,14 @@ class FakeDB:
         matches.sort(key=lambda r: r.created_at, reverse=True)
         return matches[0]
 
-    async def count_open_for(self, created_by: str) -> int:
+    def count_open_for(self, created_by: str) -> int:
         return sum(
             1
             for r in self._rows.values()
             if r.created_by == created_by and r.status in OPEN_STATUSES
         )
 
-    async def find(
+    def find(
         self,
         *,
         status: Any = None,
@@ -135,7 +135,7 @@ class FakeDB:
         out.sort(key=lambda r: r.created_at, reverse=True)
         return out[:limit]
 
-    async def claim_queued(self, limit: int = 1) -> list[PaperRequest]:
+    def claim_queued(self, limit: int = 1) -> list[PaperRequest]:
         now = datetime.now(UTC)
         ready = [
             r
@@ -148,7 +148,7 @@ class FakeDB:
             self._rows[r.id] = replace(r, status=RequestStatus.FETCHING)
         return [self._rows[r.id] for r in picked]
 
-    async def requeue(
+    def requeue(
         self, id: UUID, *, backoff_seconds: int, error: str | None = None
     ) -> None:
         if id not in self._rows:

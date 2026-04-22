@@ -33,22 +33,20 @@ def _make_request(*, doi: str | None = None, arxiv: str | None = None) -> PaperR
 
 
 @pytest.fixture
-async def client():
-    async with httpx.AsyncClient(timeout=5.0) as c:
+def client():
+    with httpx.Client(timeout=5.0) as c:
         yield c
 
 
 class TestArxivFetcher:
-    async def test_not_applicable_without_arxiv_id(
-        self, client: httpx.AsyncClient
-    ) -> None:
+    def test_not_applicable_without_arxiv_id(self, client: httpx.Client) -> None:
         fetcher = ArxivFetcher()
-        res = await fetcher.try_fetch(client, _make_request())
+        res = fetcher.try_fetch(client, _make_request())
         assert res.not_applicable is True
         assert res.success is False
 
     @respx.mock
-    async def test_success(self, client: httpx.AsyncClient) -> None:
+    def test_success(self, client: httpx.Client) -> None:
         pdf_body = b"%PDF-1.7\n..."
         route = respx.get("https://arxiv.org/pdf/2508.20254.pdf").mock(
             return_value=httpx.Response(
@@ -56,24 +54,24 @@ class TestArxivFetcher:
             )
         )
         fetcher = ArxivFetcher()
-        res = await fetcher.try_fetch(client, _make_request(arxiv="2508.20254"))
+        res = fetcher.try_fetch(client, _make_request(arxiv="2508.20254"))
         assert route.called
         assert res.success is True
         assert res.pdf_bytes == pdf_body
         assert res.source == "arxiv"
 
     @respx.mock
-    async def test_404_returns_failure(self, client: httpx.AsyncClient) -> None:
+    def test_404_returns_failure(self, client: httpx.Client) -> None:
         respx.get("https://arxiv.org/pdf/9999.99999.pdf").mock(
             return_value=httpx.Response(404)
         )
         fetcher = ArxivFetcher()
-        res = await fetcher.try_fetch(client, _make_request(arxiv="9999.99999"))
+        res = fetcher.try_fetch(client, _make_request(arxiv="9999.99999"))
         assert res.success is False
         assert res.http_status == 404
 
     @respx.mock
-    async def test_wrong_content_type(self, client: httpx.AsyncClient) -> None:
+    def test_wrong_content_type(self, client: httpx.Client) -> None:
         respx.get("https://arxiv.org/pdf/2508.20254.pdf").mock(
             return_value=httpx.Response(
                 200,
@@ -82,26 +80,24 @@ class TestArxivFetcher:
             )
         )
         fetcher = ArxivFetcher()
-        res = await fetcher.try_fetch(client, _make_request(arxiv="2508.20254"))
+        res = fetcher.try_fetch(client, _make_request(arxiv="2508.20254"))
         assert res.success is False
         assert res.http_status == 200
 
 
 class TestUnpaywallFetcher:
-    async def test_not_applicable_without_email(
-        self, client: httpx.AsyncClient
-    ) -> None:
+    def test_not_applicable_without_email(self, client: httpx.Client) -> None:
         fetcher = UnpaywallFetcher(email="")
-        res = await fetcher.try_fetch(client, _make_request(doi="10.1/x"))
+        res = fetcher.try_fetch(client, _make_request(doi="10.1/x"))
         assert res.not_applicable is True
 
-    async def test_not_applicable_without_doi(self, client: httpx.AsyncClient) -> None:
+    def test_not_applicable_without_doi(self, client: httpx.Client) -> None:
         fetcher = UnpaywallFetcher(email="me@example.com")
-        res = await fetcher.try_fetch(client, _make_request())
+        res = fetcher.try_fetch(client, _make_request())
         assert res.not_applicable is True
 
     @respx.mock
-    async def test_success(self, client: httpx.AsyncClient) -> None:
+    def test_success(self, client: httpx.Client) -> None:
         doi = "10.1021/jacs.2c01234"
         meta = {
             "best_oa_location": {"url_for_pdf": "https://example.org/paper.pdf"},
@@ -116,13 +112,13 @@ class TestUnpaywallFetcher:
             )
         )
         fetcher = UnpaywallFetcher(email="me@example.com")
-        res = await fetcher.try_fetch(client, _make_request(doi=doi))
+        res = fetcher.try_fetch(client, _make_request(doi=doi))
         assert res.success is True
         assert res.source == "unpaywall"
         assert res.pdf_bytes == b"%PDF-1.7"
 
     @respx.mock
-    async def test_no_oa_pdf(self, client: httpx.AsyncClient) -> None:
+    def test_no_oa_pdf(self, client: httpx.Client) -> None:
         doi = "10.1/behind-paywall"
         respx.get(f"https://api.unpaywall.org/v2/{doi}").mock(
             return_value=httpx.Response(
@@ -130,12 +126,12 @@ class TestUnpaywallFetcher:
             )
         )
         fetcher = UnpaywallFetcher(email="me@example.com")
-        res = await fetcher.try_fetch(client, _make_request(doi=doi))
+        res = fetcher.try_fetch(client, _make_request(doi=doi))
         assert res.success is False
         assert "no OA" in (res.error or "")
 
     @respx.mock
-    async def test_fallback_to_oa_locations(self, client: httpx.AsyncClient) -> None:
+    def test_fallback_to_oa_locations(self, client: httpx.Client) -> None:
         doi = "10.1/multiple"
         respx.get(f"https://api.unpaywall.org/v2/{doi}").mock(
             return_value=httpx.Response(
@@ -155,5 +151,5 @@ class TestUnpaywallFetcher:
             )
         )
         fetcher = UnpaywallFetcher(email="me@example.com")
-        res = await fetcher.try_fetch(client, _make_request(doi=doi))
+        res = fetcher.try_fetch(client, _make_request(doi=doi))
         assert res.success is True

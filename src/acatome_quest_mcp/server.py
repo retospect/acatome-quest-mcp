@@ -37,15 +37,15 @@ _db: DB | None = None
 _service: QuestService | None = None
 
 
-async def _get_service() -> QuestService:
+def _get_service() -> QuestService:
     global _db, _service
     if _service is not None:
         return _service
     dsn = os.environ.get("DATABASE_URL", "postgresql://localhost/cluster")
     schema = os.environ.get("QUEST_SCHEMA", "papers")
     _db = DB(dsn, schema=schema)
-    await _db.connect()
-    await _db.migrate()
+    _db.connect()
+    _db.migrate()
     _service = QuestService(_db)
     return _service
 
@@ -56,7 +56,7 @@ async def _get_service() -> QuestService:
 
 
 @mcp.tool()
-async def submit(
+def submit(
     ref: dict[str, Any],
     dry_run: bool = False,
     source: dict[str, Any] | None = None,
@@ -87,9 +87,9 @@ async def submit(
     Do not fabricate quotes from a paper whose status is not ``ingested`` or
     ``found_in_store``.
     """
-    svc = await _get_service()
+    svc = _get_service()
     try:
-        req = await svc.submit(
+        req = svc.submit(
             ref,
             dry_run=dry_run,
             source=source,
@@ -104,7 +104,7 @@ async def submit(
 
 
 @mcp.tool()
-async def status(
+def status(
     id: str | None = None,
     filter: dict[str, Any] | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
@@ -119,9 +119,9 @@ async def status(
     Returns:
         A single card (when ``id`` is set) or a list of cards.
     """
-    svc = await _get_service()
+    svc = _get_service()
     try:
-        out = await svc.status(id, filter=filter)
+        out = svc.status(id, filter=filter)
     except NotFoundError as exc:
         return {"error": "not_found", "detail": str(exc)}
     if isinstance(out, list):
@@ -130,7 +130,7 @@ async def status(
 
 
 @mcp.tool()
-async def update(
+def update(
     id: str,
     mode: str,
     choice: int | None = None,
@@ -150,7 +150,7 @@ async def update(
         priority: change the runner priority.  Requires ``priority``.
         cancel:   terminate the request.
     """
-    svc = await _get_service()
+    svc = _get_service()
     kwargs: dict[str, Any] = {}
     if choice is not None:
         kwargs["choice"] = choice
@@ -165,7 +165,7 @@ async def update(
     if priority is not None:
         kwargs["priority"] = priority
     try:
-        req = await svc.update(id, mode, **kwargs)
+        req = svc.update(id, mode, **kwargs)
     except NotFoundError as exc:
         return {"error": "not_found", "detail": str(exc)}
     except ValueError as exc:
@@ -174,7 +174,7 @@ async def update(
 
 
 @mcp.tool()
-async def submit_file(
+def submit_file(
     url: str | None = None,
     content_base64: str | None = None,
     filename: str | None = None,
@@ -213,7 +213,7 @@ async def submit_file(
     Exactly one of ``url`` / ``content_base64`` is required, and exactly
     one of ``request_id`` / ``ref``.
     """
-    svc = await _get_service()
+    svc = _get_service()
     content: bytes | None = None
     if content_base64:
         import base64
@@ -223,7 +223,7 @@ async def submit_file(
         except Exception as exc:
             return {"error": "invalid", "detail": f"bad base64: {exc}"}
     try:
-        req = await svc.submit_file(
+        req = svc.submit_file(
             url=url,
             content=content,
             filename=filename,

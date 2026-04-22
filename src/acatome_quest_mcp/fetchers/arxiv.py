@@ -17,16 +17,14 @@ ARXIV_PDF_URL = "https://arxiv.org/pdf/{id}.pdf"
 class ArxivFetcher:
     name = "arxiv"
 
-    async def try_fetch(
-        self, client: httpx.AsyncClient, req: PaperRequest
-    ) -> FetchResult:
+    def try_fetch(self, client: httpx.Client, req: PaperRequest) -> FetchResult:
         arxiv = req.resolved.arxiv or req.input.arxiv
         if not arxiv:
             return FetchResult(success=False, source=self.name, not_applicable=True)
 
         url = ARXIV_PDF_URL.format(id=arxiv)
         try:
-            resp = await client.get(url, follow_redirects=True, timeout=60.0)
+            resp = client.get(url, follow_redirects=True, timeout=60.0)
         except httpx.HTTPError as exc:
             return FetchResult(success=False, source=self.name, url=url, error=str(exc))
 

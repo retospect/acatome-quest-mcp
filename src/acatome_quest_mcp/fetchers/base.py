@@ -28,6 +28,4 @@ class Fetcher(Protocol):
 
     name: str
 
-    async def try_fetch(
-        self, client: httpx.AsyncClient, req: PaperRequest
-    ) -> FetchResult: ...
+    def try_fetch(self, client: httpx.Client, req: PaperRequest) -> FetchResult: ...

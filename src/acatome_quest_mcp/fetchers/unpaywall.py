@@ -25,9 +25,7 @@ class UnpaywallFetcher:
             email if email is not None else os.environ.get("UNPAYWALL_EMAIL", "")
         )
 
-    async def try_fetch(
-        self, client: httpx.AsyncClient, req: PaperRequest
-    ) -> FetchResult:
+    def try_fetch(self, client: httpx.Client, req: PaperRequest) -> FetchResult:
         doi = req.resolved.doi or req.input.doi
         if not doi:
             return FetchResult(success=False, source=self.name, not_applicable=True)
@@ -41,9 +39,7 @@ class UnpaywallFetcher:
 
         meta_url = UNPAYWALL_URL.format(doi=doi)
         try:
-            resp = await client.get(
-                meta_url, params={"email": self._email}, timeout=30.0
-            )
+            resp = client.get(meta_url, params={"email": self._email}, timeout=30.0)
         except httpx.HTTPError as exc:
             return FetchResult(
                 success=False, source=self.name, url=meta_url, error=str(exc)
@@ -70,7 +66,7 @@ class UnpaywallFetcher:
             )
 
         try:
-            pdf_resp = await client.get(pdf_url, follow_redirects=True, timeout=60.0)
+            pdf_resp = client.get(pdf_url, follow_redirects=True, timeout=60.0)
         except httpx.HTTPError as exc:
             return FetchResult(
                 success=False, source=self.name, url=pdf_url, error=str(exc)

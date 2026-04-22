@@ -14,7 +14,6 @@ Subcommands::
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import logging
 import os
@@ -135,7 +134,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-async def _amain(argv: list[str] | None = None) -> int:
+def _amain(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     logging.basicConfig(
         level=args.log_level.upper(),
@@ -145,45 +144,45 @@ async def _amain(argv: list[str] | None = None) -> int:
     dsn = os.environ.get("DATABASE_URL", "postgresql://localhost/cluster")
     schema = os.environ.get("QUEST_SCHEMA", "papers")
     db = DB(dsn, schema=schema)
-    await db.connect()
-    await db.migrate()
+    db.connect()
+    db.migrate()
 
     try:
         if args.cmd == "submit":
-            return await _cmd_submit(db, args)
+            return _cmd_submit(db, args)
         if args.cmd == "status":
-            return await _cmd_status(db, args)
+            return _cmd_status(db, args)
         if args.cmd == "update":
-            return await _cmd_update(db, args)
+            return _cmd_update(db, args)
         if args.cmd == "submit-file":
-            return await _cmd_submit_file(db, args)
+            return _cmd_submit_file(db, args)
         if args.cmd == "report":
-            return await _cmd_report(db, args)
+            return _cmd_report(db, args)
         if args.cmd == "runner":
             runner = Runner(db)
             try:
                 if args.once:
-                    n = await runner.tick()
+                    n = runner.tick()
                     print(f"Processed {n} request(s)")
                 else:
-                    await runner.run_forever()
+                    runner.run_forever()
             finally:
-                await runner.close()
+                runner.close()
             return 0
         if args.cmd == "reconcile":
             runner = Runner(db)
             try:
-                await runner._reconcile()
-                await runner._escalate_timeouts()
+                runner._reconcile()
+                runner._escalate_timeouts()
             finally:
-                await runner.close()
+                runner.close()
             return 0
         raise ValueError(f"unknown command: {args.cmd}")
     finally:
-        await db.close()
+        db.close()
 
 
-async def _cmd_submit(db: DB, args: argparse.Namespace) -> int:
+def _cmd_submit(db: DB, args: argparse.Namespace) -> int:
     svc = QuestService(db)
     ref: dict[str, Any] = {
         "doi": args.doi,
@@ -207,7 +206,7 @@ async def _cmd_submit(db: DB, args: argparse.Namespace) -> int:
     if args.line is not None:
         source["line"] = args.line
     try:
-        req = await svc.submit(
+        req = svc.submit(
             ref,
             dry_run=args.dry_run,
             source=source or None,
@@ -224,11 +223,11 @@ async def _cmd_submit(db: DB, args: argparse.Namespace) -> int:
     return 0
 
 
-async def _cmd_status(db: DB, args: argparse.Namespace) -> int:
+def _cmd_status(db: DB, args: argparse.Namespace) -> int:
     svc = QuestService(db)
     if args.id:
         try:
-            req = await svc.status(args.id)
+            req = svc.status(args.id)
         except NotFoundError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
@@ -251,7 +250,7 @@ async def _cmd_status(db: DB, args: argparse.Namespace) -> int:
             f[k] = int(v)
         else:
             f[k] = v
-    out = await svc.status(filter=f)
+    out = svc.status(filter=f)
     if args.count:
         print(len(out) if isinstance(out, list) else 1)
         return 0
@@ -271,7 +270,7 @@ _REPORT_DEFAULT_STATUSES = (
 _REPORT_STATUS_ORDER = {s: i for i, s in enumerate(_REPORT_DEFAULT_STATUSES)}
 
 
-async def _cmd_report(db: DB, args: argparse.Namespace) -> int:
+def _cmd_report(db: DB, args: argparse.Namespace) -> int:
     svc = QuestService(db)
     if args.status:
         try:
@@ -290,7 +289,7 @@ async def _cmd_report(db: DB, args: argparse.Namespace) -> int:
             f["created_by"] = args.created_by
         if args.document:
             f["source_document"] = args.document
-        out = await svc.status(filter=f)
+        out = svc.status(filter=f)
         assert isinstance(out, list)
         for r in out:
             if r.id not in seen:
@@ -306,7 +305,7 @@ async def _cmd_report(db: DB, args: argparse.Namespace) -> int:
     return 0
 
 
-async def _cmd_submit_file(db: DB, args: argparse.Namespace) -> int:
+def _cmd_submit_file(db: DB, args: argparse.Namespace) -> int:
     svc = QuestService(db)
     content: bytes | None = None
     url: str | None = None
@@ -334,7 +333,7 @@ async def _cmd_submit_file(db: DB, args: argparse.Namespace) -> int:
             return 2
 
     try:
-        req = await svc.submit_file(
+        req = svc.submit_file(
             url=url,
             content=content,
             filename=args.filename or (args.path.split("/")[-1] if args.path else None),
@@ -355,7 +354,7 @@ async def _cmd_submit_file(db: DB, args: argparse.Namespace) -> int:
     return 0
 
 
-async def _cmd_update(db: DB, args: argparse.Namespace) -> int:
+def _cmd_update(db: DB, args: argparse.Namespace) -> int:
     svc = QuestService(db)
     kwargs: dict[str, Any] = {}
     for k in ("choice", "doi", "code", "severity", "evidence", "priority"):
@@ -363,7 +362,7 @@ async def _cmd_update(db: DB, args: argparse.Namespace) -> int:
         if v is not None:
             kwargs[k] = v
     try:
-        req = await svc.update(args.id, args.mode, **kwargs)
+        req = svc.update(args.id, args.mode, **kwargs)
     except NotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -381,7 +380,7 @@ def _looks_like_arxiv(s: str) -> bool:
 
 
 def main() -> None:
-    sys.exit(asyncio.run(_amain()))
+    sys.exit(_amain())
 
 
 if __name__ == "__main__":

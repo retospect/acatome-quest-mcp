@@ -91,7 +91,7 @@ def _crossref(
     return d
 
 
-async def _mk_service(
+def _mk_service(
     *,
     store_rows: dict[str, dict] | None = None,
     crossref: dict[str, Any] | None = None,
@@ -113,8 +113,8 @@ async def _mk_service(
 
 
 class TestSubmitDedup:
-    async def test_store_hit_returns_found_in_store(self) -> None:
-        svc, _ = await _mk_service(
+    def test_store_hit_returns_found_in_store(self) -> None:
+        svc, _ = _mk_service(
             store_rows={
                 "10.1/sample": {
                     "slug": "smith2024sample",
@@ -125,14 +125,14 @@ class TestSubmitDedup:
                 }
             },
         )
-        req = await svc.submit({"doi": "10.1/sample"})
+        req = svc.submit({"doi": "10.1/sample"})
         assert req.status == RequestStatus.FOUND_IN_STORE
         assert req.resolved.ref == "smith2024sample"
         assert req.resolved.score == 1.0
 
-    async def test_store_hit_under_different_doi_flags_duplicate(self) -> None:
+    def test_store_hit_under_different_doi_flags_duplicate(self) -> None:
         # User submits DOI A; resolver maps to DOI B; store has DOI B.
-        svc, _ = await _mk_service(
+        svc, _ = _mk_service(
             store_rows={
                 "10.1/real": {
                     "slug": "wang2020state",
@@ -144,29 +144,29 @@ class TestSubmitDedup:
             },
             crossref=_crossref(doi="10.1/real", title="The real paper"),
         )
-        req = await svc.submit({"doi": "10.1/wrongdoi"})
+        req = svc.submit({"doi": "10.1/wrongdoi"})
         codes = {m.code for m in req.misconceptions}
         assert MisconceptionCode.DUPLICATE_OF in codes
         assert req.status == RequestStatus.FOUND_IN_STORE
 
 
 class TestSubmitResolution:
-    async def test_new_paper_enters_queued(self) -> None:
-        svc, db = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/sample"})
+    def test_new_paper_enters_queued(self) -> None:
+        svc, db = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/sample"})
         assert req.status == RequestStatus.QUEUED
         assert req.resolved.title == "Sample paper"
         assert req.resolved.score > 0.9
         # Persisted.
-        stored = await db.get(req.id)
+        stored = db.get(req.id)
         assert stored is not None
         assert stored.status == RequestStatus.QUEUED
 
-    async def test_title_mismatch_routes_to_needs_user(self) -> None:
-        svc, _ = await _mk_service(
+    def test_title_mismatch_routes_to_needs_user(self) -> None:
+        svc, _ = _mk_service(
             crossref=_crossref(title="Completely unrelated topic"),
         )
-        req = await svc.submit(
+        req = svc.submit(
             {"doi": "10.1/sample", "title": "Anion exchange for NOx reduction"}
         )
         assert req.status == RequestStatus.NEEDS_USER
@@ -174,52 +174,52 @@ class TestSubmitResolution:
             m.code == MisconceptionCode.DOI_TITLE_MISMATCH for m in req.misconceptions
         )
 
-    async def test_empty_ref_rejected(self) -> None:
-        svc, _ = await _mk_service()
+    def test_empty_ref_rejected(self) -> None:
+        svc, _ = _mk_service()
         with pytest.raises(ValueError):
-            await svc.submit({})
+            svc.submit({})
 
 
 class TestSubmitIdempotency:
-    async def test_same_doi_returns_same_id(self) -> None:
-        svc, db = await _mk_service(crossref=_crossref())
-        a = await svc.submit({"doi": "10.1/sample"}, created_by="asa")
-        b = await svc.submit({"doi": "10.1/sample"}, created_by="asa")
+    def test_same_doi_returns_same_id(self) -> None:
+        svc, db = _mk_service(crossref=_crossref())
+        a = svc.submit({"doi": "10.1/sample"}, created_by="asa")
+        b = svc.submit({"doi": "10.1/sample"}, created_by="asa")
         assert a.id == b.id
         # Only one row in the DB.
-        rows = await db.find()
+        rows = db.find()
         assert len(rows) == 1
 
-    async def test_different_dois_create_different_rows(self) -> None:
-        svc, db = await _mk_service(crossref=_crossref())
-        a = await svc.submit({"doi": "10.1/a"})
-        b = await svc.submit({"doi": "10.1/b"})
+    def test_different_dois_create_different_rows(self) -> None:
+        svc, db = _mk_service(crossref=_crossref())
+        a = svc.submit({"doi": "10.1/a"})
+        b = svc.submit({"doi": "10.1/b"})
         assert a.id != b.id
-        rows = await db.find()
+        rows = db.find()
         assert len(rows) == 2
 
 
 class TestSubmitDryRun:
-    async def test_dry_run_does_not_persist(self) -> None:
-        svc, db = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/sample"}, dry_run=True)
+    def test_dry_run_does_not_persist(self) -> None:
+        svc, db = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/sample"}, dry_run=True)
         assert req.resolved.title == "Sample paper"
-        rows = await db.find()
+        rows = db.find()
         assert len(rows) == 0
 
 
 class TestSubmitRateLimit:
-    async def test_exceeded_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_exceeded_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Patch the constant the service already imported.
         import acatome_quest_mcp.service as svc_module
 
         monkeypatch.setattr(svc_module, "MAX_OPEN_PER_AGENT", 2)
 
-        svc, _ = await _mk_service(crossref=_crossref())
-        await svc.submit({"doi": "10.1/a"}, created_by="bot")
-        await svc.submit({"doi": "10.1/b"}, created_by="bot")
+        svc, _ = _mk_service(crossref=_crossref())
+        svc.submit({"doi": "10.1/a"}, created_by="bot")
+        svc.submit({"doi": "10.1/b"}, created_by="bot")
         with pytest.raises(RateLimitError):
-            await svc.submit({"doi": "10.1/c"}, created_by="bot")
+            svc.submit({"doi": "10.1/c"}, created_by="bot")
 
 
 # ---------------------------------------------------------------------------
@@ -228,44 +228,44 @@ class TestSubmitRateLimit:
 
 
 class TestStatus:
-    async def test_by_id(self) -> None:
-        svc, _ = await _mk_service(crossref=_crossref())
-        created = await svc.submit({"doi": "10.1/sample"})
-        out = await svc.status(str(created.id))
+    def test_by_id(self) -> None:
+        svc, _ = _mk_service(crossref=_crossref())
+        created = svc.submit({"doi": "10.1/sample"})
+        out = svc.status(str(created.id))
         assert not isinstance(out, list)
         assert out.id == created.id
 
-    async def test_by_id_missing(self) -> None:
-        svc, _ = await _mk_service()
+    def test_by_id_missing(self) -> None:
+        svc, _ = _mk_service()
         from uuid import uuid4
 
         with pytest.raises(NotFoundError):
-            await svc.status(str(uuid4()))
+            svc.status(str(uuid4()))
 
-    async def test_filter_by_status(self) -> None:
-        svc, _ = await _mk_service(crossref=_crossref())
-        await svc.submit({"doi": "10.1/a"})
-        rows = await svc.status(filter={"status": "queued"})
+    def test_filter_by_status(self) -> None:
+        svc, _ = _mk_service(crossref=_crossref())
+        svc.submit({"doi": "10.1/a"})
+        rows = svc.status(filter={"status": "queued"})
         assert isinstance(rows, list)
         assert len(rows) == 1
 
-    async def test_filter_by_has_misconception(self) -> None:
-        svc, _ = await _mk_service(
+    def test_filter_by_has_misconception(self) -> None:
+        svc, _ = _mk_service(
             crossref=_crossref(title="Foo"),
         )
-        await svc.submit({"doi": "10.1/good", "title": "Foo"})  # no misc
-        await svc.submit(
+        svc.submit({"doi": "10.1/good", "title": "Foo"})  # no misc
+        svc.submit(
             {"doi": "10.1/bad", "title": "Totally different thing"}
         )  # mismatch misc
-        flagged = await svc.status(filter={"has_misconception": True})
+        flagged = svc.status(filter={"has_misconception": True})
         assert isinstance(flagged, list)
         assert len(flagged) == 1
 
-    async def test_filter_by_source_document(self) -> None:
-        svc, _ = await _mk_service(crossref=_crossref())
-        await svc.submit({"doi": "10.1/a"}, source={"document": "ch02.tex"})
-        await svc.submit({"doi": "10.1/b"}, source={"document": "ch03.tex"})
-        rows = await svc.status(filter={"source_document": "ch02.tex"})
+    def test_filter_by_source_document(self) -> None:
+        svc, _ = _mk_service(crossref=_crossref())
+        svc.submit({"doi": "10.1/a"}, source={"document": "ch02.tex"})
+        svc.submit({"doi": "10.1/b"}, source={"document": "ch03.tex"})
+        rows = svc.status(filter={"source_document": "ch02.tex"})
         assert isinstance(rows, list)
         assert len(rows) == 1
         assert rows[0].source["document"] == "ch02.tex"
@@ -277,22 +277,22 @@ class TestStatus:
 
 
 class TestUpdate:
-    async def test_cancel(self) -> None:
-        svc, _ = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/a"})
-        out = await svc.update(str(req.id), UpdateMode.CANCEL)
+    def test_cancel(self) -> None:
+        svc, _ = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/a"})
+        out = svc.update(str(req.id), UpdateMode.CANCEL)
         assert out.status == RequestStatus.CANCELLED
 
-    async def test_priority(self) -> None:
-        svc, _ = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/a"})
-        out = await svc.update(str(req.id), "priority", priority=9)
+    def test_priority(self) -> None:
+        svc, _ = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/a"})
+        out = svc.update(str(req.id), "priority", priority=9)
         assert out.priority == 9
 
-    async def test_flag_adds_misconception(self) -> None:
-        svc, _ = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/a"})
-        out = await svc.update(
+    def test_flag_adds_misconception(self) -> None:
+        svc, _ = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/a"})
+        out = svc.update(
             str(req.id),
             "flag",
             code="retracted",
@@ -300,64 +300,62 @@ class TestUpdate:
         )
         assert any(m.code == MisconceptionCode.RETRACTED for m in out.misconceptions)
 
-    async def test_flag_allowed_on_terminal_request(self) -> None:
-        svc, _ = await _mk_service(
+    def test_flag_allowed_on_terminal_request(self) -> None:
+        svc, _ = _mk_service(
             store_rows={
                 "10.1/a": {"slug": "s", "doi": "10.1/a", "title": "t", "year": 2024}
             }
         )
-        req = await svc.submit({"doi": "10.1/a"})  # found_in_store → terminal
-        out = await svc.update(str(req.id), "flag", code="retracted")
+        req = svc.submit({"doi": "10.1/a"})  # found_in_store → terminal
+        out = svc.update(str(req.id), "flag", code="retracted")
         assert len(out.misconceptions) == 1
         # But cancel on terminal is rejected.
         with pytest.raises(ValueError):
-            await svc.update(str(req.id), "cancel")
+            svc.update(str(req.id), "cancel")
 
-    async def test_confirm_picks_candidate(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        svc, db = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/a"})
+    def test_confirm_picks_candidate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        svc, db = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/a"})
         # Inject a candidate directly (resolver doesn't emit them in MVP).
         candidate_ref = ResolvedRef(
             doi="10.1/alt", title="An alternate paper", score=0.8
         )
-        await db.update(
+        db.update(
             req.id,
             candidates=[Candidate(ref=candidate_ref, reason="near title match")],
         )
-        out = await svc.update(str(req.id), "confirm", choice=0)
+        out = svc.update(str(req.id), "confirm", choice=0)
         assert out.resolved.doi == "10.1/alt"
         assert out.status == RequestStatus.QUEUED
         assert out.candidates == []
 
-    async def test_confirm_rejects_bad_choice(self) -> None:
-        svc, _ = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/a"})
+    def test_confirm_rejects_bad_choice(self) -> None:
+        svc, _ = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/a"})
         with pytest.raises(ValueError):
-            await svc.update(str(req.id), "confirm", choice=5)
+            svc.update(str(req.id), "confirm", choice=5)
 
-    async def test_repoint_reresolves(self) -> None:
-        svc, _db = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/broken"})
+    def test_repoint_reresolves(self) -> None:
+        svc, _db = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/broken"})
         # Flip the resolver's canned answer for the new DOI.
         svc.resolver._crossref_fn = lambda doi, mailto="": _crossref(
             doi=doi, title="Real paper"
         )
-        out = await svc.update(str(req.id), "repoint", doi="10.1/correct")
+        out = svc.update(str(req.id), "repoint", doi="10.1/correct")
         assert out.resolved.doi == "10.1/correct"
         assert out.resolved.title == "Real paper"
         assert out.status == RequestStatus.QUEUED
 
-    async def test_repoint_requires_doi(self) -> None:
-        svc, _ = await _mk_service(crossref=_crossref())
-        req = await svc.submit({"doi": "10.1/a"})
+    def test_repoint_requires_doi(self) -> None:
+        svc, _ = _mk_service(crossref=_crossref())
+        req = svc.submit({"doi": "10.1/a"})
         with pytest.raises(ValueError):
-            await svc.update(str(req.id), "repoint")
+            svc.update(str(req.id), "repoint")
 
-    async def test_unknown_id_errors(self) -> None:
-        svc, _ = await _mk_service()
+    def test_unknown_id_errors(self) -> None:
+        svc, _ = _mk_service()
         from uuid import uuid4
 
         with pytest.raises(NotFoundError):
-            await svc.update(str(uuid4()), "cancel")
+            svc.update(str(uuid4()), "cancel")

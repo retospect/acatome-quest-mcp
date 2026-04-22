@@ -81,7 +81,7 @@ class QuestService:
     # submit
     # -----------------------------------------------------------------
 
-    async def submit(
+    def submit(
         self,
         ref: PaperRef | dict[str, Any],
         *,
@@ -112,7 +112,7 @@ class QuestService:
             resolved = store_hit.to_resolved()
         else:
             # 1. Resolve via Crossref / S2.
-            resolved, candidates, miscs = await self.resolver.resolve(pref)
+            resolved, candidates, miscs = self.resolver.resolve(pref)
             # 2. Second dedup pass: resolver may have discovered a DOI we
             # didn't know about.
             if resolved.doi:
@@ -140,19 +140,19 @@ class QuestService:
         # 4. Idempotency — do not create a duplicate open request.
         dedup_doi = resolved.doi or pref.doi
         if dedup_doi:
-            existing = await self.db.find_open_by_doi(dedup_doi)
+            existing = self.db.find_open_by_doi(dedup_doi)
             if existing:
                 log.info("Idempotent submit: returning existing %s", existing.id)
                 return existing
         dedup_arxiv = resolved.arxiv or pref.arxiv
         if not dedup_doi and dedup_arxiv:
-            existing = await self.db.find_open_by_arxiv(dedup_arxiv)
+            existing = self.db.find_open_by_arxiv(dedup_arxiv)
             if existing:
                 return existing
 
         # 5. Per-agent rate limit.
         if created_by:
-            open_count = await self.db.count_open_for(created_by)
+            open_count = self.db.count_open_for(created_by)
             if open_count >= MAX_OPEN_PER_AGENT:
                 raise RateLimitError(
                     f"{created_by} already has {open_count} open requests "
@@ -186,13 +186,13 @@ class QuestService:
             priority=priority,
             not_before=now,
         )
-        return await self.db.insert(req)
+        return self.db.insert(req)
 
     # -----------------------------------------------------------------
     # status
     # -----------------------------------------------------------------
 
-    async def status(
+    def status(
         self,
         id: UUID | str | None = None,
         *,
@@ -200,12 +200,12 @@ class QuestService:
     ) -> PaperRequest | list[PaperRequest]:
         if id is not None:
             uid = id if isinstance(id, UUID) else UUID(str(id))
-            req = await self.db.get(uid)
+            req = self.db.get(uid)
             if not req:
                 raise NotFoundError(f"no request with id {uid}")
             return req
         f = filter or {}
-        return await self.db.find(
+        return self.db.find(
             status=f.get("status"),
             created_by=f.get("created_by"),
             has_misconception=f.get("has_misconception"),
@@ -217,7 +217,7 @@ class QuestService:
     # submit_file
     # -----------------------------------------------------------------
 
-    async def submit_file(
+    def submit_file(
         self,
         *,
         url: str | None = None,
@@ -227,7 +227,7 @@ class QuestService:
         ref: PaperRef | dict[str, Any] | None = None,
         created_by: str | None = None,
         inbox: Path | None = None,
-        http: httpx.AsyncClient | None = None,
+        http: httpx.Client | None = None,
     ) -> PaperRequest:
         """Attach a user-supplied PDF to a request.
 
@@ -253,14 +253,14 @@ class QuestService:
         if (url is None) == (content is None):
             raise ValueError("submit_file requires exactly one of url or content")
 
-        pdf_bytes = await self._load_pdf(url=url, content=content, http=http)
+        pdf_bytes = self._load_pdf(url=url, content=content, http=http)
         _validate_pdf(pdf_bytes)
         sha = hashlib.sha256(pdf_bytes).hexdigest()
 
         # Resolve target request.
         if request_id is not None:
             uid = request_id if isinstance(request_id, UUID) else UUID(str(request_id))
-            req = await self.db.get(uid)
+            req = self.db.get(uid)
             if req is None:
                 raise NotFoundError(f"no request with id {uid}")
             if req.status in _SUBMIT_FILE_REFUSED:
@@ -268,7 +268,7 @@ class QuestService:
                     f"request {uid} is {req.status.value}; refusing to attach a new PDF"
                 )
         else:
-            req = await self.submit(
+            req = self.submit(
                 ref,  # type: ignore[arg-type]
                 created_by=created_by,
             )
@@ -303,7 +303,7 @@ class QuestService:
             ),
         ]
 
-        updated = await self.db.update(
+        updated = self.db.update(
             req.id,
             status=RequestStatus.INGESTING,
             pdf_hash=sha,
@@ -314,12 +314,12 @@ class QuestService:
         assert updated is not None
         return updated
 
-    async def _load_pdf(
+    def _load_pdf(
         self,
         *,
         url: str | None,
         content: bytes | None,
-        http: httpx.AsyncClient | None,
+        http: httpx.Client | None,
     ) -> bytes:
         if content is not None:
             return content
@@ -328,23 +328,23 @@ class QuestService:
         if http is None:
             import httpx as _httpx
 
-            http = _httpx.AsyncClient(
+            http = _httpx.Client(
                 timeout=60.0,
                 headers={"User-Agent": "acatome-quest-mcp/submit_file"},
             )
         try:
-            resp = await http.get(url, follow_redirects=True)
+            resp = http.get(url, follow_redirects=True)
             resp.raise_for_status()
             return resp.content
         finally:
             if close_http:
-                await http.aclose()
+                http.close()
 
     # -----------------------------------------------------------------
     # update
     # -----------------------------------------------------------------
 
-    async def update(
+    def update(
         self,
         id: UUID | str,
         mode: UpdateMode | str,
@@ -352,7 +352,7 @@ class QuestService:
     ) -> PaperRequest:
         uid = id if isinstance(id, UUID) else UUID(str(id))
         m = UpdateMode(mode) if not isinstance(mode, UpdateMode) else mode
-        req = await self.db.get(uid)
+        req = self.db.get(uid)
         if not req:
             raise NotFoundError(f"no request with id {uid}")
         if req.status in TERMINAL_STATUSES and m != UpdateMode.FLAG:
@@ -362,10 +362,10 @@ class QuestService:
             )
 
         if m == UpdateMode.CANCEL:
-            updated = await self.db.update(uid, status=RequestStatus.CANCELLED)
+            updated = self.db.update(uid, status=RequestStatus.CANCELLED)
         elif m == UpdateMode.PRIORITY:
             priority = int(kwargs.get("priority", 0))
-            updated = await self.db.update(uid, priority=priority)
+            updated = self.db.update(uid, priority=priority)
         elif m == UpdateMode.FLAG:
             code = kwargs.get("code")
             if not code:
@@ -376,7 +376,7 @@ class QuestService:
                 code, evidence=evidence, severity=severity, source="user"
             )
             miscs = [*req.misconceptions, misc]
-            updated = await self.db.update(uid, misconceptions=miscs)
+            updated = self.db.update(uid, misconceptions=miscs)
         elif m == UpdateMode.CONFIRM:
             choice = int(kwargs.get("choice", -1))
             if choice < 0 or choice >= len(req.candidates):
@@ -384,7 +384,7 @@ class QuestService:
                     f"choice {choice} out of range (have {len(req.candidates)} candidates)"
                 )
             picked = req.candidates[choice].ref
-            updated = await self.db.update(
+            updated = self.db.update(
                 uid,
                 resolved=picked,
                 status=RequestStatus.QUEUED,
@@ -396,9 +396,9 @@ class QuestService:
                 raise ValueError("mode=repoint requires doi=<new DOI>")
             # Re-resolve under the new DOI.
             new_ref = PaperRef(doi=new_doi).normalize()
-            resolved, candidates, miscs = await self.resolver.resolve(new_ref)
+            resolved, candidates, miscs = self.resolver.resolve(new_ref)
             all_miscs = list(req.misconceptions) + list(miscs)
-            updated = await self.db.update(
+            updated = self.db.update(
                 uid,
                 resolved=resolved,
                 candidates=candidates,

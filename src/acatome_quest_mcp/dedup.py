@@ -3,16 +3,14 @@
 ``acatome-store`` is an optional dependency.  If it isn't installed, dedup is
 a no-op and every request proceeds to resolution + fetch.
 
-We support two modes:
+Library-mode only: imports :class:`acatome_store.Store` and calls its
+``get(doi)`` method directly.  The former SQL-mode fallback (direct asyncpg
+query against the store's ``refs`` table) was removed in April 2026 — it
+was never imported anywhere and was broken by the sync rewrite.  If a
+minimal-container deployment ever genuinely needs dedup without the full
+``acatome-store`` install, reintroduce a ``SqlDedup`` built on ``psycopg3``.
 
-- **Library mode** (preferred): import ``acatome_store.Store`` and call its
-  ``get(doi)`` method directly.  Used by the MCP server running on the same
-  host as the store.
-- **SQL mode** (fallback): connect to the store's DB directly via asyncpg
-  and query the ``refs`` table.  Used when the store library isn't on the
-  Python path (e.g. a minimal runner container).
-
-Both modes return the same shape: ``StoreHit(ref, doi, slug)`` or ``None``.
+Returns ``StoreHit(ref, doi, slug)`` or ``None``.
 """
 
 from __future__ import annotations
@@ -109,60 +107,3 @@ def _from_store_row(paper: dict[str, Any]) -> StoreHit:
     )
 
 
-# ---------------------------------------------------------------------------
-# SQL-mode fallback
-# ---------------------------------------------------------------------------
-
-
-class SqlDedup:
-    """SQL-mode dedup — direct asyncpg query against the store's refs table.
-
-    Only used by the runner in minimal deployments where we don't want to
-    pull in all of acatome-store's dependencies (SQLAlchemy, chromadb, etc.).
-    """
-
-    def __init__(self, pool: Any, *, table: str = "refs") -> None:
-        self._pool = pool
-        self._table = table
-
-    @property
-    def enabled(self) -> bool:
-        return self._pool is not None
-
-    async def lookup_by_doi(self, doi: str) -> StoreHit | None:
-        if not self._pool or not doi:
-            return None
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                f"SELECT slug, doi, arxiv_id, title, year "
-                f"FROM {self._table} WHERE doi = $1 LIMIT 1",
-                doi,
-            )
-        if not row:
-            return None
-        return StoreHit(
-            slug=row["slug"] or "",
-            doi=row["doi"],
-            arxiv=row["arxiv_id"],
-            title=row["title"],
-            year=row["year"],
-        )
-
-    async def lookup_by_arxiv(self, arxiv: str) -> StoreHit | None:
-        if not self._pool or not arxiv:
-            return None
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                f"SELECT slug, doi, arxiv_id, title, year "
-                f"FROM {self._table} WHERE arxiv_id = $1 LIMIT 1",
-                arxiv,
-            )
-        if not row:
-            return None
-        return StoreHit(
-            slug=row["slug"] or "",
-            doi=row["doi"],
-            arxiv=row["arxiv_id"],
-            title=row["title"],
-            year=row["year"],
-        )
